@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "676118587467",
+    "project_id": "emsiquizapp-bd6d7925",
+    "storage_bucket": "emsiquizapp-bd6d7925.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:676118587467:android:51b360ee315b66c672c5ce",
+        "android_client_info": {
+          "package_name": "com.doha.emsiquizapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDAZ1hj4Hk80fwfpg3om4_FYeYwYP0c__s"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
