@@ -33,8 +33,10 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 
 class QuizActivity : AppCompatActivity() {
+
     private lateinit var db: FirebaseFirestore
     private var questionsList = mutableListOf<Question>()
+
     private var index = 0
     private var score = 0
     private var isAnswered = false
@@ -48,12 +50,13 @@ class QuizActivity : AppCompatActivity() {
     private lateinit var btnNext: Button
     private lateinit var questionImage: ImageView
     private lateinit var viewFinder: PreviewView
-    
+
     private lateinit var tvAiExplanation: TextView
     private lateinit var btnExplainIA: Button
     private lateinit var agentAvatar: ImageView
 
     private val cameraExecutor = Executors.newSingleThreadExecutor()
+
     private val faceDetector = FaceDetection.getClient(
         FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
@@ -63,15 +66,21 @@ class QuizActivity : AppCompatActivity() {
     private var lastAnalysisTime = 0L
     private var lastFraudAlertTime = 0L
 
-    private val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
-        if (isGranted) startCamera()
-    }
+    private val requestPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+            if (isGranted) {
+                startCamera()
+            } else {
+                Toast.makeText(this, "Permission caméra refusée", Toast.LENGTH_SHORT).show()
+            }
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_quiz)
 
         db = FirebaseFirestore.getInstance()
+
         initViews()
         checkCameraPermission()
         loadQuestions()
@@ -137,8 +146,8 @@ class QuizActivity : AppCompatActivity() {
             try {
                 cameraProvider.unbindAll()
                 cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA, preview, imageAnalyzer)
-            } catch (exc: Exception) {
-                Log.e("QUIZ", "Camera error", exc)
+            } catch (e: Exception) {
+                Log.e("QUIZ_CAMERA", "Erreur caméra", e)
             }
         }, ContextCompat.getMainExecutor(this))
     }
@@ -151,13 +160,12 @@ class QuizActivity : AppCompatActivity() {
             return
         }
         lastAnalysisTime = currentTime
-
         val mediaImage = imageProxy.image
         if (mediaImage != null) {
             val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
             faceDetector.process(image)
                 .addOnSuccessListener { faces ->
-                    if (faces.isEmpty()) detectFraud("Reste devant l'écran ! 🕵️‍♂️")
+                    if (faces.isEmpty()) detectFraud("Reste devant l'écran ! 🕵️")
                     else if (faces.size > 1) detectFraud("Pas de triche ! 🚫")
                 }
                 .addOnCompleteListener { imageProxy.close() }
@@ -176,22 +184,42 @@ class QuizActivity : AppCompatActivity() {
 
     private fun loadQuestions() {
         tvQuestion.text = "Chargement..."
-        db.collection("questions").get()
+        db.collection("Questions").get()
             .addOnSuccessListener { result ->
                 questionsList.clear()
-                for (doc in result) {
-                    val q = doc.toObject(Question::class.java)
-                    questionsList.add(q)
-                }
-                if (questionsList.isNotEmpty()) {
-                    showQuestion()
+                if (result.isEmpty) {
+                    // Si la collection est vide, on ajoute des questions par défaut
+                    seedDatabase()
                 } else {
-                    tvQuestion.text = "Firestore: Collection 'questions' vide."
+                    for (doc in result) {
+                        val question = doc.toObject(Question::class.java)
+                        questionsList.add(question)
+                    }
+                    showQuestion()
                 }
             }
             .addOnFailureListener { e ->
-                tvQuestion.text = "Firestore Error: ${e.message}"
+                Log.e("FIRESTORE", "Erreur Firestore", e)
+                tvQuestion.text = "Erreur Firestore : ${e.message}"
             }
+    }
+
+    private fun seedDatabase() {
+        val samples = listOf(
+            Question("Quelle est la capitale du Maroc ?", "Casablanca", "Rabat", "Marrakech", "Tanger", "Rabat"),
+            Question("Quel est l'organe principal du système circulatoire ?", "Poumon", "Cœur", "Foie", "Cerveau", "Cœur"),
+            Question("Qui a peint la Joconde ?", "Van Gogh", "Picasso", "Léonard de Vinci", "Claude Monet", "Léonard de Vinci")
+        )
+        
+        var count = 0
+        for (q in samples) {
+            db.collection("Questions").add(q).addOnSuccessListener {
+                count++
+                if (count == samples.size) {
+                    loadQuestions() // Recharge une fois terminé
+                }
+            }
+        }
     }
 
     private fun showQuestion() {
@@ -200,10 +228,9 @@ class QuizActivity : AppCompatActivity() {
         tvAiExplanation.visibility = View.GONE
         btnExplainIA.visibility = View.GONE
         resetOptionsStyle()
-        
+
         val q = questionsList[index]
         tvQuestion.text = q.question
-        
         if (q.imgUrl.isNotEmpty()) {
             questionImage.visibility = View.VISIBLE
             Glide.with(this).load(q.imgUrl).into(questionImage)
@@ -224,14 +251,12 @@ class QuizActivity : AppCompatActivity() {
         btnNext.text = "Next"
         enableOptions(false)
         btnExplainIA.visibility = View.VISIBLE
-        
         val selectedId = radioGroup.checkedRadioButtonId
         val selectedRadioButton = findViewById<RadioButton>(selectedId)
         val selectedAnswer = selectedRadioButton.text.toString().trim()
         val correctAnswer = questionsList[index].repCorrect.trim()
-        
         highlightCorrectAnswer(correctAnswer)
-        
+
         if (selectedAnswer.equals(correctAnswer, ignoreCase = true)) {
             score++
         } else {
@@ -290,28 +315,13 @@ class QuizActivity : AppCompatActivity() {
     private fun explainWithAI(question: String, correctAnswer: String) {
         tvAiExplanation.visibility = View.VISIBLE
         tvAiExplanation.text = "L'IA réfléchit... ⏳"
-        
         lifecycleScope.launch {
             try {
-                // Initialisation locale pour isoler le crash
-                val model = GenerativeModel(
-                    modelName = "gemini-1.5-flash",
-                    apiKey = BuildConfig.GEMINI_API_KEY
-                )
-                
-                val prompt = "Explique brièvement pourquoi la réponse à '$question' est '$correctAnswer'."
-                val response = model.generateContent(prompt)
-                
-                runOnUiThread {
-                    tvAiExplanation.text = response.text ?: "Pas de réponse."
-                }
+                val model = GenerativeModel(modelName = "gemini-1.5-flash", apiKey = BuildConfig.GEMINI_API_KEY)
+                val response = model.generateContent("Explique brièvement pourquoi la réponse à '$question' est '$correctAnswer'.")
+                runOnUiThread { tvAiExplanation.text = response.text ?: "Pas de réponse." }
             } catch (e: Throwable) {
-                Log.e("AI_CRASH", "Détail du crash", e)
-                runOnUiThread {
-                    // Affiche l'erreur au lieu de fermer l'app
-                    tvAiExplanation.text = "Erreur IA: ${e.localizedMessage}"
-                    Toast.makeText(this@QuizActivity, "Détail: ${e.message}", Toast.LENGTH_LONG).show()
-                }
+                runOnUiThread { tvAiExplanation.text = "Erreur IA: ${e.localizedMessage}" }
             }
         }
     }
